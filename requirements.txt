@@ -1,0 +1,24 @@
+# Native setup for MinAtar, MuJoCo, and DeepMind Control with Python 3.11.
+# For offline AWAC and IQL, use the separate CORL/D4RL environment in
+# dockerfiles/Dockerfile.corl_d4rl and the upstream CORL setup instructions.
+
+# Shared
+numpy==1.26.4
+torch==2.5.1
+wandb
+
+# MinAtar
+MinAtar==1.0.15
+
+# MuJoCo and PPO
+gymnasium[mujoco]==0.29.1
+mujoco==2.3.7
+tyro
+tensorboard
+
+# TD3 and SAC replay buffer
+stable-baselines3==2.3.2
+
+# DeepMind Control Suite
+shimmy[dm-control]==1.3.0
+dm-control==1.0.14
