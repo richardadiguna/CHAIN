@@ -3,30 +3,45 @@ import numpy as np
 
 def add_exploration_arguments(parser):
     parser.add_argument(
-        "--exploration", choices=("epsilon-greedy", "ucb"), default="epsilon-greedy",
+        "--exploration",
+        choices=("epsilon-greedy", "ucb"),
+        default="epsilon-greedy",
         help="enable a UCB-style bonus in the replay reward with 'ucb'",
     )
-    parser.add_argument("--ucb-coef", type=float, default=1.0, help="UCB reward bonus weight")
     parser.add_argument(
-        "--count-key", choices=("simhash", "exact"), default="simhash",
+        "--ucb-coef", type=float, default=1.0, help="UCB reward bonus weight"
+    )
+    parser.add_argument(
+        "--count-key",
+        choices=("simhash", "exact"),
+        default="simhash",
         help="how UCB groups boards when counting visits",
     )
     parser.add_argument(
-        "--hash-bits", type=int, default=12, help="length of the SimHash bucket ID",
+        "--hash-bits",
+        type=int,
+        default=12,
+        help="length of the SimHash bucket ID",
     )
 
 
 def make_explorer(args, state_shape, num_actions):
     if args.exploration == "ucb":
         return UCBExploration(
-            state_shape, num_actions, args.ucb_coef,
-            args.count_key, args.hash_bits, args.seed,
+            state_shape,
+            num_actions,
+            args.ucb_coef,
+            args.count_key,
+            args.hash_bits,
+            args.seed,
         )
     return None
 
 
 class UCBExploration:
-    def __init__(self, state_shape, num_actions, coefficient, count_key, hash_bits, seed):
+    def __init__(
+        self, state_shape, num_actions, coefficient, count_key, hash_bits, seed
+    ):
         if not np.isfinite(coefficient) or coefficient < 0:
             raise ValueError("ucb-coef must be finite and nonnegative")
         if count_key == "simhash" and hash_bits < 1:
@@ -59,12 +74,10 @@ class UCBExploration:
         if counts is None:
             counts = np.zeros(self.num_actions, dtype=np.int64)
             self.counts[key] = counts
-        bonus = self.coefficient * np.sqrt(
-            np.log1p(counts.sum()) / (1 + counts[action])
-        )
         self.first_visits += int(counts[action] == 0)
         counts[action] += 1
         self.total_visits += 1
+        bonus = self.coefficient * np.sqrt(np.log(self.total_visits) / counts[action])
         self.total_bonus += bonus
         return float(bonus)
 
