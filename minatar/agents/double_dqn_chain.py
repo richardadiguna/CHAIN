@@ -1,11 +1,12 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-from agents.agent_utils import replay_buffer
-
-import wandb
 import copy
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+import wandb
+from agents.agent_utils import replay_buffer
+from torch import nn
+
 
 ################################################################################################################
 # class QNetwork
@@ -19,7 +20,7 @@ import copy
 class QNetwork(nn.Module):
     def __init__(self, in_channels, num_actions):
 
-        super(QNetwork, self).__init__()
+        super().__init__()
 
         # One hidden 2D convolution layer:
         #   in_channels: variable
@@ -33,6 +34,7 @@ class QNetwork(nn.Module):
         #   the output consist 128 rectified units
         def size_linear_unit(size, kernel_size=3, stride=1):
             return (size - (kernel_size - 1) - 1) // stride + 1
+
         num_linear_units = size_linear_unit(10) * size_linear_unit(10) * 16
         self.fc_hidden = nn.Linear(in_features=num_linear_units, out_features=128)
 
@@ -52,13 +54,26 @@ class QNetwork(nn.Module):
         return self.output(x)
 
 
-class DoubleDQN_CHAIN(object):
-    def __init__(self, state_shape, num_actions, device,
-                 gamma=0.99, learning_rate=3e-4, hard_replacement_interval=200, memory_size=1e5, batch_size=32,
-                 init_epsilon=1.0, end_epsilon=0.1, epsilon_decay_steps=100000,
-                 invest=False, invest_interval=1, invest_window_size=10,
-                 reg_coef=100.0, reg_his_idx=2,
-                 ):
+class DoubleDQN_CHAIN:
+    def __init__(
+        self,
+        state_shape,
+        num_actions,
+        device,
+        gamma=0.99,
+        learning_rate=3e-4,
+        hard_replacement_interval=200,
+        memory_size=1e5,
+        batch_size=32,
+        init_epsilon=1.0,
+        end_epsilon=0.1,
+        epsilon_decay_steps=100000,
+        invest=False,
+        invest_interval=1,
+        invest_window_size=10,
+        reg_coef=100.0,
+        reg_his_idx=2,
+    ):
         self.device = device
         self.in_channels = state_shape[2]
         self.num_actions = num_actions
@@ -95,7 +110,11 @@ class DoubleDQN_CHAIN(object):
         if (not is_greedy) and np.random.binomial(1, self.epsilon) == 1:
             action = np.random.choice([i for i in range(self.num_actions)])
         else:
-            state = (torch.tensor(state, device=self.device).permute(2, 0, 1)).unsqueeze(0).float()
+            state = (
+                (torch.tensor(state, device=self.device).permute(2, 0, 1))
+                .unsqueeze(0)
+                .float()
+            )
             with torch.no_grad():
                 action = self.Q_net(state).argmax(1).cpu().numpy()[0]
         return action
@@ -109,11 +128,33 @@ class DoubleDQN_CHAIN(object):
 
         # states, next_states are of tensor (BATCH_SIZE, in_channel, 10, 10) - inline with pytorch NCHW format
         # actions, rewards, is_terminal are of tensor (BATCH_SIZE, 1)
-        states = torch.FloatTensor(np.stack(batch_samples.state, axis=0)).to(self.device).permute(0, 3, 1, 2).contiguous()
-        actions = torch.LongTensor(np.stack(batch_samples.action, axis=0)).to(self.device).unsqueeze(1)
-        rewards = torch.FloatTensor(np.stack(batch_samples.reward, axis=0)).to(self.device).unsqueeze(1)
-        next_states = torch.FloatTensor(np.stack(batch_samples.next_state, axis=0)).to(self.device).permute(0, 3, 1, 2).contiguous()
-        dones = torch.FloatTensor(np.stack(batch_samples.is_terminal, axis=0)).to(self.device).unsqueeze(1)
+        states = (
+            torch.FloatTensor(np.stack(batch_samples.state, axis=0))
+            .to(self.device)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+        )
+        actions = (
+            torch.LongTensor(np.stack(batch_samples.action, axis=0))
+            .to(self.device)
+            .unsqueeze(1)
+        )
+        rewards = (
+            torch.FloatTensor(np.stack(batch_samples.reward, axis=0))
+            .to(self.device)
+            .unsqueeze(1)
+        )
+        next_states = (
+            torch.FloatTensor(np.stack(batch_samples.next_state, axis=0))
+            .to(self.device)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+        )
+        dones = (
+            torch.FloatTensor(np.stack(batch_samples.is_terminal, axis=0))
+            .to(self.device)
+            .unsqueeze(1)
+        )
 
         # Obtain a batch of Q(S_t, A_t) and compute the forward pass.
         # Note: policy_network output Q-values for all the actions of a state, but all we need is the A_t taken at time t
@@ -141,8 +182,12 @@ class DoubleDQN_CHAIN(object):
             reg_loss = 0
         else:
             reg_samples = self.replay_buffer.sample(self.batch_size)
-            reg_states = torch.FloatTensor(np.stack(reg_samples.state, axis=0))\
-                .to(self.device).permute(0, 3, 1, 2).contiguous()
+            reg_states = (
+                torch.FloatTensor(np.stack(reg_samples.state, axis=0))
+                .to(self.device)
+                .permute(0, 3, 1, 2)
+                .contiguous()
+            )
             reg_his_qf = self.his_qf_list[-self.reg_his_idx]
             reg_q = self.Q_net(reg_states)
             with torch.no_grad():
@@ -166,14 +211,16 @@ class DoubleDQN_CHAIN(object):
             # for param, target_param in zip(self.Q_net.parameters(), self.Q_target.parameters()):
             #     target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        if self.invest:
+        if self.invest:  # noqa: SIM102
             # NOTE - invest policy churn for recent updates
             if self.update_cnt % 5000 == 0:
                 self.invest_policy_churn(step=step)
 
         # NOTE - maintain historical Q networks for investigation of policy churn
         self.his_qf_list.append(copy.deepcopy(self.Q_net))
-        self.his_qf_list = self.his_qf_list[-self.invest_window_size * self.invest_interval:]
+        self.his_qf_list = self.his_qf_list[
+            -self.invest_window_size * self.invest_interval :
+        ]
 
         if self.update_cnt % 5000 == 0:
             if reg_loss != 0:
@@ -185,8 +232,12 @@ class DoubleDQN_CHAIN(object):
 
     def invest_policy_churn(self, step):
         ref_batch_samples = self.replay_buffer.sample(self.batch_size)
-        ref_states = torch.FloatTensor(np.stack(ref_batch_samples.state, axis=0))\
-                     .to(self.device).permute(0, 3, 1, 2).contiguous()
+        ref_states = (
+            torch.FloatTensor(np.stack(ref_batch_samples.state, axis=0))
+            .to(self.device)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+        )
 
         frozen_qf = self.his_qf_list[-1]
         ref_qf_list = []
@@ -223,28 +274,41 @@ class DoubleDQN_CHAIN(object):
                 continue
 
             ref_maxq, ref_greedy_a = ref_q.max(1)
-            invest_a_diff = ((cur_ref_greedy_a - ref_greedy_a) != 0).sum() / self.batch_size
+            invest_a_diff = (
+                (cur_ref_greedy_a - ref_greedy_a) != 0
+            ).sum() / self.batch_size
             invest_maxq_diff = (cur_ref_maxq - ref_maxq).mean()
             invest_q_diff = (cur_ref_q - ref_q).mean()
             invest_q_diff_abs = (cur_ref_q - ref_q).abs().mean()
 
             if cnt == 0:
-                write_suffix = ''
+                write_suffix = ""
             elif cnt == len(prior_ref_q_list) - 1:
-                write_suffix = '_init'
+                write_suffix = "_init"
             else:
-                write_suffix = '_' + str(cnt * self.invest_interval)
-            wandb.log({"invest/greedy_a_diff" + write_suffix: invest_a_diff.item()}, step=step)
-            wandb.log({"invest/maxq_diff" + write_suffix: invest_maxq_diff.item()}, step=step)
-            wandb.log({"invest/q_diff_sig" + write_suffix: invest_q_diff.item()}, step=step)
-            wandb.log({"invest/q_diff_abs" + write_suffix: invest_q_diff_abs.item()}, step=step)
+                write_suffix = "_" + str(cnt * self.invest_interval)
+            wandb.log(
+                {"invest/greedy_a_diff" + write_suffix: invest_a_diff.item()}, step=step
+            )
+            wandb.log(
+                {"invest/maxq_diff" + write_suffix: invest_maxq_diff.item()}, step=step
+            )
+            wandb.log(
+                {"invest/q_diff_sig" + write_suffix: invest_q_diff.item()}, step=step
+            )
+            wandb.log(
+                {"invest/q_diff_abs" + write_suffix: invest_q_diff_abs.item()},
+                step=step,
+            )
 
             cnt += 1
 
     def save(self, filename, directory):
-        torch.save(self.Q_net.state_dict(), '%s/%s_q_net.pth' % (directory, filename))
-        torch.save(self.Q_target.state_dict(), '%s/%s_q_target.pth' % (directory, filename))
+        torch.save(self.Q_net.state_dict(), f"{directory}/{filename}_q_net.pth")
+        torch.save(self.Q_target.state_dict(), f"{directory}/{filename}_q_target.pth")
 
     def load(self, filename, directory):
-        self.Q_net.load_state_dict(torch.load('%s/%s_q_net.pth' % (directory, filename)))
-        self.Q_target.load_state_dict(torch.load('%s/%s_q_target.pth' % (directory, filename)))
+        self.Q_net.load_state_dict(torch.load(f"{directory}/{filename}_q_net.pth"))
+        self.Q_target.load_state_dict(
+            torch.load(f"{directory}/{filename}_q_target.pth")
+        )
