@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import wandb
 from agents.double_dqn import DoubleDQN
+from agents.novel_drift import NovelDrift
 from agents.ucb_exploration import add_exploration_arguments, make_explorer
 
 from minatar import Environment
@@ -83,6 +84,11 @@ def get_args_from_parser():
 
     # NOTE - hyperparams for policy churn investigation
     parser.add_argument("--invest", default=False, action="store_true")
+    parser.add_argument(
+        "--invest-novel-drift",
+        action="store_true",
+        help="measure one-update Q drift on every novel pair after warm-up",
+    )
     parser.add_argument("--invest_window_size", default=10, type=int)
     parser.add_argument("--invest_interval", default=2, type=int)
 
@@ -198,6 +204,7 @@ def run_exp(args):
 
     explorer = make_explorer(args, state_shape, num_actions)
     seen_state_actions = set()
+    novel_drift = NovelDrift(args.seed) if args.invest_novel_drift else None
 
     # Training
     run_start_time = time.time()
@@ -220,6 +227,14 @@ def run_exp(args):
             key = explorer.key(s) if explorer is not None else None
             state_action = (s.tobytes(), int(a))
             r, done = env.act(a)
+            should_train = global_step_count >= INIT_RANDOM_STEPS
+            drift_capture = None
+            if (
+                novel_drift is not None
+                and should_train
+                and state_action not in seen_state_actions
+            ):
+                drift_capture = novel_drift.capture_before(agent, s, a)
             seen_state_actions.add(state_action)
             s_ = env.state()
 
@@ -229,7 +244,7 @@ def run_exp(args):
                 replay_reward += explorer.record_visit(key, a)
             agent.store_experience(s, a, replay_reward, s_, int(done))
 
-            if global_step_count >= INIT_RANDOM_STEPS:
+            if should_train:
                 loss = agent.train(step=global_step_count + 1)
                 q_loss_his.append(loss)
 
@@ -241,6 +256,11 @@ def run_exp(args):
 
             ep_step_count += 1
             global_step_count += 1
+            if drift_capture is not None:
+                wandb.log(
+                    novel_drift.metrics_after(agent, drift_capture),
+                    step=global_step_count,
+                )
             if global_step_count % 10000 == 0 or global_step_count == MAX_TOTAL_STEPS:
                 metrics = {"coverage/unique_state_actions": len(seen_state_actions)}
                 if explorer is not None:
