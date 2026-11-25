@@ -1,3 +1,4 @@
+import copy
 import os
 import random
 import time
@@ -6,22 +7,17 @@ from dataclasses import dataclass
 import gymnasium as gym
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import tyro
-from torch.distributions.normal import Normal
-from torch.utils.tensorboard import SummaryWriter
-
-import copy
-
-from utils.ppo_basic_utils import make_env, DSAgent, eval_policy
+from torch import nn, optim
+from torch.utils.tensorboard.writer import SummaryWriter
+from utils.ppo_basic_utils import DSAgent, eval_policy, make_env
 
 
 @dataclass
 class Args:
     use_policy_ckpt: bool = False
 
-    alg: str = 'ppo'
+    alg: str = "ppo"
     scale_up_ratio: int = 1
 
     """the name of designated algorithm"""
@@ -34,7 +30,7 @@ class Args:
     seed: int = 1
     """seed of the experiment"""
 
-    gpu_no: str = '0'
+    gpu_no: str = "0"
     """designate the gpu with corresponding number to run the exp"""
     use_cluster: bool = False
     """0 for using normal physical workstation; 1 for using cluster"""
@@ -91,7 +87,6 @@ class Args:
 
 
 if __name__ == "__main__":
-
     start_time = time.time()
 
     args = tyro.cli(Args)
@@ -101,7 +96,7 @@ if __name__ == "__main__":
 
     run_name = f"{args.alg}_{args.env_id}"
     if args.norm_env:
-        run_name += '_ne'
+        run_name += "_ne"
     run_name += f"_s{args.seed}_t{int(time.time())}"
     print("---------------------------------------")
     print(f"Alg: {args.alg}, Env: {args.env_id}, Seed: {args.seed}")
@@ -118,10 +113,11 @@ if __name__ == "__main__":
     # NOTE - add wandb & tensorboard logger
     if args.track:
         import wandb
-        os.environ['WANDB_MODE'] = 'offline'
+
+        os.environ["WANDB_MODE"] = "offline"
         wandb.init(
             name=run_name,
-            project='policy_churn_mujcoo_ppo',
+            project="policy_churn_mujcoo_ppo",
             # entity='',
             config=vars(args),
             sync_tensorboard=True,
@@ -131,7 +127,8 @@ if __name__ == "__main__":
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+        "|param|value|\n|-|-|\n%s"
+        % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
     # Set seeds
@@ -143,38 +140,70 @@ if __name__ == "__main__":
 
     # Set device
     if not args.use_cluster:
-        os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_no
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_no
         # - cpu occupation num
         cpu_num = 2
-        os.environ['OMP_NUM_THREADS'] = str(cpu_num)
-        os.environ['OPENBLAS_NUM_THREADS'] = str(cpu_num)
-        os.environ['MKL_NUM_THREADS'] = str(cpu_num)
-        os.environ['VECLIB_MAXIMUM_THREADS'] = str(cpu_num)
-        os.environ['NUMEXPR_NUM_THREADS'] = str(cpu_num)
+        os.environ["OMP_NUM_THREADS"] = str(cpu_num)
+        os.environ["OPENBLAS_NUM_THREADS"] = str(cpu_num)
+        os.environ["MKL_NUM_THREADS"] = str(cpu_num)
+        os.environ["VECLIB_MAXIMUM_THREADS"] = str(cpu_num)
+        os.environ["NUMEXPR_NUM_THREADS"] = str(cpu_num)
         torch.set_num_threads(cpu_num)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device == 'cpu': print('- Note cpu is being used now.')
+    if device == "cpu":
+        print("- Note cpu is being used now.")
 
     # init env
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed, i, args.capture_video, run_name, args.gamma, args.norm_env)
-         for i in range(args.num_envs)]
+        [
+            make_env(
+                args.env_id,
+                args.seed,
+                i,
+                args.capture_video,
+                run_name,
+                args.gamma,
+                args.norm_env,
+            )
+            for i in range(args.num_envs)
+        ]
     )
-    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Box), (
+        "only continuous action space is supported"
+    )
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
 
     # NOTE - Eval env only resets once (this is somewhat special due to the implementation in CleanRL)
     eval_envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + 1234, 0, args.capture_video, run_name, args.gamma, args.norm_env)])
+        [
+            make_env(
+                args.env_id,
+                args.seed + 1234,
+                0,
+                args.capture_video,
+                run_name,
+                args.gamma,
+                args.norm_env,
+            )
+        ]
+    )
 
     agent = DSAgent(envs, scale_up_ratio=args.scale_up_ratio).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate / np.sqrt(args.scale_up_ratio), eps=1e-5)
+    optimizer = optim.Adam(
+        agent.parameters(),
+        lr=args.learning_rate / np.sqrt(args.scale_up_ratio),
+        eps=1e-5,
+    )
 
-    norm_stats = [copy.deepcopy(e.obs_rms) for e in envs.envs] if args.norm_env else None
-    init_eval, init_horizon = eval_policy(agent, eval_envs, norm_stats, eval_episodes=10, device=device)
+    norm_stats = (
+        [copy.deepcopy(e.obs_rms) for e in envs.envs] if args.norm_env else None
+    )
+    init_eval, init_horizon = eval_policy(
+        agent, eval_envs, norm_stats, eval_episodes=10, device=device
+    )
     # init_eval, init_horizon, next_obs = eval_policy(agent, envs, next_obs, eval_episodes=10, device=device)
 
     # NOTE - record checkpoint policies
@@ -185,16 +214,22 @@ if __name__ == "__main__":
     his_agent_list = [copy.deepcopy(agent)]
 
     print("---------------------------------------")
-    print(f"T: {0}, Evaluation over {len(init_eval)} episodes. "
-          f"Scores: {np.mean(init_eval):.3f}, Horizons: {np.mean(init_horizon):.3f}")
+    print(
+        f"T: {0}, Evaluation over {len(init_eval)} episodes. "
+        f"Scores: {np.mean(init_eval):.3f}, Horizons: {np.mean(init_horizon):.3f}"
+    )
     print("---------------------------------------")
     # evaluations, horizons = [np.mean(init_eval)], [np.mean(init_horizon)]
     writer.add_scalar("charts/Eval", np.mean(init_eval), 0)
     writer.add_scalar("charts/Eval_Horizon", np.mean(init_horizon), 0)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
+    obs = torch.zeros(
+        (args.num_steps, args.num_envs) + envs.single_observation_space.shape
+    ).to(device)
+    actions = torch.zeros(
+        (args.num_steps, args.num_envs) + envs.single_action_space.shape
+    ).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -216,7 +251,7 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate / np.sqrt(args.scale_up_ratio)
             optimizer.param_groups[0]["lr"] = lrnow
 
-        for step in range(0, args.num_steps):
+        for step in range(args.num_steps):
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
@@ -229,17 +264,28 @@ if __name__ == "__main__":
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            next_obs, reward, terminations, truncations, infos = envs.step(
+                action.cpu().numpy()
+            )
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
+            next_obs, next_done = (
+                torch.Tensor(next_obs).to(device),
+                torch.Tensor(next_done).to(device),
+            )
 
             if "final_info" in infos:
                 for info in infos["final_info"]:
                     if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                        print(
+                            f"global_step={global_step}, episodic_return={info['episode']['r']}"
+                        )
+                        writer.add_scalar(
+                            "charts/episodic_return", info["episode"]["r"], global_step
+                        )
+                        writer.add_scalar(
+                            "charts/episodic_length", info["episode"]["l"], global_step
+                        )
                         # NOTE - record running evals
                         running_evals.append(info["episode"]["r"])
 
@@ -253,13 +299,19 @@ if __name__ == "__main__":
             eval_cnt += 1
             # NOTE - use checkpoint policy for stable evaluation
             eval_agent = ckpt_agent if args.use_policy_ckpt else agent
-            norm_stats = [copy.deepcopy(e.obs_rms) for e in envs.envs] if args.norm_env else None
-            cur_eval, cur_horizon = eval_policy(eval_agent, eval_envs, norm_stats, eval_episodes=10, device=device)
+            norm_stats = (
+                [copy.deepcopy(e.obs_rms) for e in envs.envs] if args.norm_env else None
+            )
+            cur_eval, cur_horizon = eval_policy(
+                eval_agent, eval_envs, norm_stats, eval_episodes=10, device=device
+            )
             # NOTE - update the score of checkpoint policy? No, we should not use this information
 
             print("---------------------------------------")
-            print(f"T: {global_step}, Evaluation over {len(cur_eval)} episodes. "
-                  f"Scores: {np.mean(cur_eval):.3f}, Horizons: {np.mean(cur_horizon):.3f}")
+            print(
+                f"T: {global_step}, Evaluation over {len(cur_eval)} episodes. "
+                f"Scores: {np.mean(cur_eval):.3f}, Horizons: {np.mean(cur_horizon):.3f}"
+            )
             print("---------------------------------------")
             # evaluations.append(np.mean(cur_eval))
             # horizons.append(np.mean(cur_horizon))
@@ -278,8 +330,12 @@ if __name__ == "__main__":
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]
                     nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                delta = (
+                    rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                )
+                advantages[t] = lastgaelam = (
+                    delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                )
             returns = advantages + values
 
         # flatten the batch
@@ -304,7 +360,9 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
                 mb_ref_inds = b_ref_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(
+                    b_obs[mb_inds], b_actions[mb_inds]
+                )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -312,15 +370,21 @@ if __name__ == "__main__":
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                    clipfracs += [
+                        ((ratio - 1.0).abs() > args.clip_coef).float().mean().item()
+                    ]
 
                 mb_advantages = b_advantages[mb_inds]
                 if args.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (
+                        mb_advantages.std() + 1e-8
+                    )
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss2 = -mb_advantages * torch.clamp(
+                    ratio, 1 - args.clip_coef, 1 + args.clip_coef
+                )
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
@@ -367,7 +431,9 @@ if __name__ == "__main__":
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar(
+            "charts/learning_rate", optimizer.param_groups[0]["lr"], global_step
+        )
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
@@ -377,8 +443,9 @@ if __name__ == "__main__":
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
+        writer.add_scalar(
+            "charts/SPS", int(global_step / (time.time() - start_time)), global_step
+        )
 
     envs.close()
     writer.close()
