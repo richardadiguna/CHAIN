@@ -6,7 +6,7 @@
 #   https://github.com/kenjyoung/MinAtar                                                                 #
 ################################################################################################################
 
-import argparse
+import argparse  # noqa: I001
 import os
 import random
 import time
@@ -40,7 +40,7 @@ def evaluate_policy(policy, eval_env, eval_episodes=10, env_name=None):
             t += 1
 
             # BugFixed for Seaquest never done case
-            if env_name is not None and env_name == "seaquest":
+            if env_name is not None and env_name == "seaquest":  # noqa: SIM102
                 if t >= 1000 and ep_reward < 0.1:
                     break
 
@@ -48,7 +48,7 @@ def evaluate_policy(policy, eval_env, eval_episodes=10, env_name=None):
     avg_step /= eval_episodes
 
     print(
-        "Evaluation over %d episodes - Score: %f, Steps: %f"
+        "Evaluation over %d episodes - Score: %f, Steps: %f"  # noqa: UP031
         % (eval_episodes, avg_return, avg_step)
     )
     return avg_return, avg_step
@@ -219,6 +219,7 @@ def run_exp(args):
     print("---------------------------------------")
 
     explorer = make_explorer(args, state_shape, num_actions)
+    seen_state_actions = set()
 
     # Training
     run_start_time = time.time()
@@ -239,7 +240,9 @@ def run_exp(args):
                 agent.epsilon_decay()
 
             key = explorer.key(s) if explorer is not None else None
+            state_action = (s.tobytes(), int(a))
             r, done = env.act(a)
+            seen_state_actions.add(state_action)
             s_ = env.state()
 
             # Store the shaped reward once so replay uses the collection-time bonus.
@@ -260,10 +263,11 @@ def run_exp(args):
 
             ep_step_count += 1
             global_step_count += 1
-            if explorer is not None and (
-                global_step_count % 10000 == 0 or global_step_count == MAX_TOTAL_STEPS
-            ):
-                wandb.log(explorer.metrics(), step=global_step_count)
+            if global_step_count % 10000 == 0 or global_step_count == MAX_TOTAL_STEPS:
+                metrics = {"coverage/unique_state_actions": len(seen_state_actions)}
+                if explorer is not None:
+                    metrics.update(explorer.metrics())
+                wandb.log(metrics, step=global_step_count)
 
             s = s_
             ep_reward += r
@@ -281,7 +285,7 @@ def run_exp(args):
                 print("---------------------------------------")
 
             # BugFixed for Seaquest never done case
-            if args.env == "seaquest":
+            if args.env == "seaquest":  # noqa: SIM102
                 if ep_step_count >= 1000 and ep_reward < 0.1:
                     break
 
